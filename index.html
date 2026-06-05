@@ -587,12 +587,10 @@ const uid=p=>(p||'')+Date.now().toString(36)+Math.random().toString(36).slice(2,
 const isoAddDays=n=>{const d=new Date();d.setDate(d.getDate()+n);return d.toISOString().slice(0,10);};
 
 /* ============================================================
-   LICENSE / ACCESS CONTROL
-   - Offline monthly unlock key  +  optional remote kill-switch.
-   - SECRET must match the one in licence-key-generator.html (KEEP PRIVATE).
+ 
    ============================================================ */
-const LICENSE_SECRET='SRC-9F3K-2025'; // <-- change this to your own secret before selling
-// Daily codes are derived from this secret; vendor cannot guess future keys.
+const LICENSE_SECRET='MNS-9F3K-2025'; 
+
 async function sha(str){
   try{const buf=await crypto.subtle.digest('SHA-256',new TextEncoder().encode(str));
     return [...new Uint8Array(buf)].map(b=>b.toString(16).padStart(2,'0')).join('');}
