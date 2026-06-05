@@ -190,6 +190,7 @@
   <header class="top">
     <div class="title">🌶️ Spicy Red Chilli<small id="topTagline">Restaurant POS</small></div>
     <span class="daybadge" id="dayBadge"></span>
+    <span id="syncBadge" style="display:none;font-size:11px;font-weight:700;padding:4px 9px;border-radius:999px"></span>
     <span id="licBanner" style="display:none;font-size:11px;font-weight:700;padding:4px 9px;border-radius:999px;background:#fff3cd;color:#8a6d00"></span>
     <div class="who" id="whoBox"></div>
   </header>
@@ -532,10 +533,12 @@
             <button class="btn-ghost" onclick="testPrint()" style="margin-top:8px">🖨️ Test Print</button>
             <button class="btn-primary" onclick="savePrinter()" style="margin-top:8px">💾 Save Printer</button>
           </div>
-          <div class="card" style="margin-top:14px"><h3>☁️ Google Sheets Sync (optional)</h3>
-            <p class="muted" style="font-size:12px;margin-top:0">Paste your Apps Script <b>Web App URL</b> to back up sales to Google Sheets. See <b>google-apps-script.gs</b> in the project for setup.</p>
+          <div class="card" style="margin-top:14px"><h3>☁️ Live Multi-Device Sync</h3>
+            <p class="muted" style="font-size:12px;margin-top:0">Paste your Apps Script <b>Web App URL</b> to share data across ALL devices (users, menu, bills, customers, etc.). Use the <b>same URL on every device</b>. Changes appear everywhere within ~12 seconds.</p>
             <div class="field"><input id="setSyncUrl" placeholder="https://script.google.com/macros/s/..../exec"></div>
-            <div class="row"><button class="btn-ghost" onclick="testSync()">🔌 Test Connection</button><button class="btn-primary" onclick="saveSync()">💾 Save</button></div>
+            <div class="row"><button class="btn-ghost" onclick="testSync()">🔌 Test</button><button class="btn-primary" onclick="saveSync()">💾 Save & Start Sync</button></div>
+            <div class="row" style="margin-top:6px"><button class="btn-ok grow" onclick="syncAll()">⬆️ Upload My Data</button><button class="btn-ghost grow" onclick="pullData()">⬇️ Pull Latest</button></div>
+            <p class="muted" style="font-size:11px;margin-top:6px"><b>First time setup:</b> On your MAIN device (with your menu/users) click <b>Save</b> then <b>Upload My Data</b>. On every OTHER device, paste the same URL and click <b>Save</b> — it pulls everything automatically. After that it stays in sync by itself.</p>
           </div>
           <div class="card" style="margin-top:14px"><h3>🤖 AI for Menu Photo (optional)</h3>
             <div class="field"><label>Provider</label><select id="setAiProv"><option value="gemini">Google Gemini</option><option value="openai">OpenAI</option></select></div>
@@ -578,6 +581,7 @@
    SPICY RED CHILLI POS  —  single-file, offline-first
    ============================================================ */
 const LS='src_pos_v1';
+const DEVICE_ID=(function(){try{let d=localStorage.getItem('src_device_id');if(!d){d='dev_'+Math.random().toString(36).slice(2,9);localStorage.setItem('src_device_id',d);}return d;}catch(e){return 'dev_x';}})();
 const $=s=>document.querySelector(s);
 const $$=s=>[...document.querySelectorAll(s)];
 const money=n=>'₹'+(Math.round((+n||0)*100)/100).toLocaleString('en-IN');
@@ -587,10 +591,16 @@ const uid=p=>(p||'')+Date.now().toString(36)+Math.random().toString(36).slice(2,
 const isoAddDays=n=>{const d=new Date();d.setDate(d.getDate()+n);return d.toISOString().slice(0,10);};
 
 /* ============================================================
- 
+   LICENSE / ACCESS CONTROL
+   - Offline monthly unlock key  +  optional remote kill-switch.
+   - SECRET must match the one in licence-key-generator.html (KEEP PRIVATE).
    ============================================================ */
-const LICENSE_SECRET='SRC-9F3K-2025'; 
-
+const LICENSE_SECRET='SRC-9F3K-2025'; // <-- change this to your own secret before selling
+// Your PRIVATE control-script URL (kill-switch). Paste it here before selling.
+// It lives in YOUR Google account only — the client can never edit it.
+// Leave '' to rely only on the monthly unlock key.
+const LICENSE_CONTROL_URL='';
+// Daily codes are derived from this secret; vendor cannot guess future keys.
 async function sha(str){
   try{const buf=await crypto.subtle.digest('SHA-256',new TextEncoder().encode(str));
     return [...new Uint8Array(buf)].map(b=>b.toString(16).padStart(2,'0')).join('');}
@@ -619,10 +629,10 @@ function daysLeft(){
 }
 // Locked if blocked, or today's date is strictly AFTER the expiry date.
 function isLocked(){return !!(DB.license&&DB.license.blocked) || (DB.license&&DB.license.expiry && todayStr()>DB.license.expiry);}
-// optional remote kill-switch: reads a single cell value from your sheet via the sync URL
+// remote kill-switch: reads OK/BLOCK from YOUR private control script (separate from data sheet)
 async function checkRemote(){
-  const url=DB.settings.syncUrl;if(!url)return;
-  try{const r=await fetch(url+'?action=license',{method:'GET'});const txt=(await r.text()).trim().toUpperCase();
+  const url=LICENSE_CONTROL_URL||DB.settings.licenseUrl;if(!url)return;
+  try{const r=await fetch(url,{method:'GET'});const txt=(await r.text()).trim().toUpperCase();
     if(txt.includes('BLOCK')){DB.license.blocked=true;save();}
     else if(txt.includes('OK')||txt.includes('ALLOW')){if(DB.license.blocked){DB.license.blocked=false;save();}}
   }catch(e){/* offline: ignore, rely on key expiry */}
@@ -675,13 +685,15 @@ function load(){
     ['vendors','recipes','vendorTxns','deductions','inventory','staff','attendance','expenses','sessions','payments','customers'].forEach(k=>{if(!d[k])d[k]=[];});
     if(!d.carts)d.carts={};
     if(d.settings&&d.settings.gstEnabled===undefined)d.settings.gstEnabled=false;
+    if(d.settings&&d.settings.licenseUrl===undefined)d.settings.licenseUrl='';
     if(!d.license)d.license={expiry:isoAddDays(14),lastKey:'',blocked:false,activated:false};
     return d;
   }}catch(e){}
   return seed();
 }
 let _saveWarned=false;
-function save(){try{localStorage.setItem(LS,JSON.stringify(DB));}catch(e){if(!_saveWarned){_saveWarned=true;console.warn('Save failed (storage blocked):',e.message);toast('⚠️ Running in preview — data won\'t persist. Open the file in Chrome to save.');}}}
+function persist(){try{localStorage.setItem(LS,JSON.stringify(DB));}catch(e){if(!_saveWarned){_saveWarned=true;console.warn('Save failed (storage blocked):',e.message);toast('⚠️ Running in preview — data won\'t persist. Open the file in Chrome to save.');}}}
+function save(){persist();schedulePush();}
 function seed(){
   const menu=[];
   const add=(cat,sub,name,full,half,veg)=>menu.push({id:uid('m'),cat,sub,name,full,half:half||0,veg});
@@ -733,7 +745,7 @@ function seed(){
     {id:'r4',dishId:menu.find(m=>m.name==='Chilli Prawn').id,invId:'i3',qty:0.18}
   ];
   return {
-    settings:{name:'Spicy Red Chilli',tagline:'Pure Veg & Non-veg · Chinese & Indian',phone:'',addr1:'',addr2:'',gst:'',upi:'',thanks:'Thank you! Visit again 🌶️',gstEnabled:false,cgst:2.5,sgst:2.5,roll:72,font:12,autoPrint:true,syncUrl:'',aiProv:'gemini',aiKey:''},
+    settings:{name:'Spicy Red Chilli',tagline:'Pure Veg & Non-veg · Chinese & Indian',phone:'',addr1:'',addr2:'',gst:'',upi:'',thanks:'Thank you! Visit again 🌶️',gstEnabled:false,cgst:2.5,sgst:2.5,roll:72,font:12,autoPrint:true,syncUrl:'',licenseUrl:'',aiProv:'gemini',aiKey:''},
     users:[{name:'Owner',pin:'1111',role:'Owner'},{name:'Cashier',pin:'2222',role:'Cashier'}],
     menu,tables,bills:[],expenses:[],inventory,vendors,recipes,vendorTxns:[],deductions:[],staff:[],attendance:[],sessions:[],payments:[],customers:[],
     license:{expiry:isoAddDays(14),lastKey:'',blocked:false,activated:false},
@@ -1637,7 +1649,7 @@ function fillSettings(){
 function toggleGstFields(){const on=$('#setGstEnabled').checked;$('#gstRates').style.opacity=on?'1':'.4';$('#setCgst').disabled=!on;$('#setSgst').disabled=!on;}
 function saveSettings(){const s=DB.settings;s.name=$('#setName').value;s.tagline=$('#setTag').value;s.phone=$('#setPhone').value;s.addr1=$('#setAddr1').value;s.addr2=$('#setAddr2').value;s.gst=$('#setGst').value;s.upi=$('#setUpi').value;s.thanks=$('#setThanks').value;s.gstEnabled=$('#setGstEnabled').checked;s.cgst=+$('#setCgst').value||0;s.sgst=+$('#setSgst').value||0;save();$('#topTagline').textContent=s.tagline;toast('Saved ✅');}
 function savePrinter(){const s=DB.settings;s.roll=+$('#setRoll').value||72;s.font=+$('#setFont').value||12;s.autoPrint=$('#setAutoPrint').checked;save();toast('Printer saved');}
-function saveSync(){DB.settings.syncUrl=$('#setSyncUrl').value.trim();save();toast('Sync URL saved');}
+function saveSync(){DB.settings.syncUrl=$('#setSyncUrl').value.trim();persist();toast('Sync URL saved');startSync();}
 function saveAi(){DB.settings.aiProv=$('#setAiProv').value;DB.settings.aiKey=$('#setAiKey').value.trim();save();toast('AI key saved');}
 function renderUsers(){const tb=$('#usersTable tbody');tb.innerHTML='';DB.users.forEach((u,i)=>{tb.innerHTML+=`<tr><td>${u.name}</td><td>${u.role}</td><td>${u.pin}</td><td>${DB.users.length>1?`<button class="btn-ghost" onclick="delUser(${i})">🗑️</button>`:''}</td></tr>`;});}
 function addUser(){const name=$('#uName').value.trim();const pin=$('#uPin').value.trim();if(!name||pin.length!==4){toast('Name + 4-digit PIN');return;}DB.users.push({name,pin,role:$('#uRole').value});save();$('#uName').value='';$('#uPin').value='';renderUsers();toast('User added');}
@@ -1677,13 +1689,133 @@ function printDayReport(sid){
 }
 
 /* ---------- SYNC (Google Sheets) ---------- */
-async function syncBill(b){
-  const url=DB.settings.syncUrl;if(!url)return;
-  try{await fetch(url,{method:'POST',mode:'no-cors',headers:{'Content-Type':'text/plain'},body:JSON.stringify({type:'bill',data:b})});}catch(e){console.warn('sync failed',e);}
+/* ============================================================
+   LIVE MULTI-DEVICE SYNC  (whole-database via Google Sheets)
+   - The Apps Script keeps ONE JSON "snapshot" of the database.
+   - Each device PULLS the snapshot on startup + every 12s.
+   - When you change anything, it PUSHES the snapshot (debounced).
+   - Last-write-wins, with a guard so your OPEN cart isn't wiped.
+   ============================================================ */
+const SYNC_KEYS=['bills','expenses','customers','users','vendors','vendorTxns','inventory','staff','payments','menu','sessions','tables','recipes','deductions','attendance','settings','license'];
+let _rev=0;              // revision number from the server
+let _pushTimer=null;     // debounce timer
+let _pushing=false, _pulling=false, _pendingPush=false;
+let _syncEnabled=false;
+
+function syncUrl(){return (DB.settings.syncUrl||'').trim();}
+
+function snapshot(){
+  const o={rev:_rev,ts:Date.now(),device:DEVICE_ID};
+  SYNC_KEYS.forEach(k=>{o[k]=DB[k];});
+  // never push secrets we keep local-only? keep settings but you can strip aiKey if desired
+  return o;
 }
+function schedulePush(){
+  if(!_syncEnabled||!syncUrl())return;
+  clearTimeout(_pushTimer);
+  _pushTimer=setTimeout(pushNow,1500); // debounce rapid edits
+}
+async function pushNow(){
+  if(!_syncEnabled||!syncUrl())return;
+  if(_pushing){_pendingPush=true;return;}
+  _pushing=true;
+  try{
+    const snap=snapshot();
+    const res=await fetch(syncUrl(),{method:'POST',headers:{'Content-Type':'text/plain'},body:JSON.stringify({type:'put',rev:_rev,data:snap})});
+    const j=await res.json();
+    if(j&&j.rev!==undefined)_rev=j.rev;
+    setSyncBadge('ok');
+  }catch(e){setSyncBadge('off');console.warn('push failed',e);}
+  _pushing=false;
+  if(_pendingPush){_pendingPush=false;pushNow();}
+}
+async function pullNow(opts){
+  opts=opts||{};
+  if(!syncUrl())return false;
+  if(_pulling)return false;
+  _pulling=true;
+  let changed=false;
+  try{
+    const res=await fetch(syncUrl()+'?action=get',{method:'GET'});
+    const j=await res.json();
+    if(j&&j.rev!==undefined){
+      if(j.rev>_rev || opts.force){
+        applyRemote(j);
+        _rev=j.rev;
+        changed=true;
+      }else if(j.rev<_rev){
+        // our copy is newer -> push it
+        pushNow();
+      }
+    }
+    setSyncBadge('ok');
+  }catch(e){setSyncBadge('off');console.warn('pull failed',e);}
+  _pulling=false;
+  return changed;
+}
+function applyRemote(j){
+  // Preserve the cart the cashier is editing right now, so live pulls don't wipe it.
+  const editingKey=(typeof cart!=='undefined'&&cart)?cart.key:null;
+  const myCarts=DB.carts||{};
+  SYNC_KEYS.forEach(k=>{ if(j[k]!==undefined) DB[k]=j[k]; });
+  if(j.carts){
+    DB.carts=j.carts;
+    if(editingKey&&myCarts[editingKey]){DB.carts[editingKey]=myCarts[editingKey];} // keep my open cart
+  }
+  persist();
+  // refresh whatever page is visible
+  try{refreshActivePage();}catch(e){}
+}
+function refreshActivePage(){
+  const active=document.querySelector('.page.active');if(!active)return;
+  const id=active.id.replace('page-','');
+  const map={dash:renderDash,tables:renderTables,menu:renderMenuMgr,sales:renderReports,exp:renderExpenses,inv:renderInv,vendors:renderVendors,customers:renderCustomers,staff:renderStaff,payroll:renderPayroll,settings:fillSettings};
+  if(map[id])map[id]();
+  if(typeof updateDayBadge==='function')updateDayBadge();
+}
+function setSyncBadge(state){
+  const el=document.getElementById('syncBadge');if(!el)return;
+  if(!_syncEnabled){el.style.display='none';return;}
+  el.style.display='inline-block';
+  if(state==='ok'){el.textContent='☁️ Synced';el.style.background='#e7f7ee';el.style.color='var(--ok)';}
+  else{el.textContent='☁️ Offline';el.style.background='#fdeceb';el.style.color='var(--red)';}
+}
+let _syncPoll=null;
+function startSync(){
+  _syncEnabled=!!syncUrl();
+  if(_syncPoll){clearInterval(_syncPoll);_syncPoll=null;}
+  if(!_syncEnabled){setSyncBadge('off');return;}
+  pullNow({force:true});
+  _syncPoll=setInterval(()=>pullNow(),12000); // poll every 12s
+  setSyncBadge('ok');
+}
+
+/* legacy bill-level call now just triggers a debounced push */
+async function syncBill(b){ schedulePush(); }
+
 async function testSync(){
-  const url=$('#setSyncUrl').value.trim();if(!url){toast('Paste URL first');return;}
-  try{await fetch(url,{method:'POST',mode:'no-cors',headers:{'Content-Type':'text/plain'},body:JSON.stringify({type:'ping'})});toast('Sent ping (check your Sheet)');}catch(e){toast('Failed: '+e.message);}
+  const url=($('#setSyncUrl').value||'').trim();if(!url){toast('Paste URL first');return;}
+  try{
+    const res=await fetch(url+'?action=get',{method:'GET'});
+    const j=await res.json();
+    toast('✅ Connected. Server rev: '+(j&&j.rev!==undefined?j.rev:'new'));
+  }catch(e){toast('❌ Failed: '+e.message+' (check URL / deployment access = Anyone)');}
+}
+/* Push everything now, then start live sync */
+async function syncAll(){
+  if(!syncUrl()){if($('#setSyncUrl').value.trim()){saveSync();}else{toast('Save the Sync URL first');return;}}
+  _syncEnabled=true;
+  toast('☁️ Uploading all data...');
+  await pushNow();
+  startSync();
+  toast('✅ Live sync is ON for this device');
+}
+/* Pull latest from server on demand */
+async function pullData(){
+  if(!syncUrl()){toast('Save the Sync URL first');return;}
+  toast('⬇️ Pulling latest...');
+  const ch=await pullNow({force:true});
+  toast(ch?'✅ Updated from server':'✅ Already up to date');
 }
 
 /* ---------- BACKUP ---------- */
@@ -1734,7 +1866,9 @@ function wire(){
 /* ---------- START ---------- */
 async function boot(){
   await checkRemote();           // optional remote kill-switch (ignored if offline)
+  if(syncUrl()){ await pullNow({force:true}); }  // get latest shared data before anything
   if(isLocked()){ showLockScreen(); return; }
+  startSync();                   // begin live multi-device sync
   renderLogin();
 }
 boot();
