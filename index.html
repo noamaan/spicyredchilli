@@ -599,7 +599,7 @@ const LICENSE_SECRET='SRC-9F3K-2025'; // <-- change this to your own secret befo
 // Your PRIVATE control-script URL (kill-switch). Paste it here before selling.
 // It lives in YOUR Google account only — the client can never edit it.
 // Leave '' to rely only on the monthly unlock key.
-const LICENSE_CONTROL_URL='';
+const LICENSE_CONTROL_URL='https://script.google.com/macros/s/AKfycbxTsByWYsZmpMa0nnusvAg9h9N5xkiBWCEazEzI4WoEKVPzR9ybsQqKfoLhCOBVEYGufQ/exec';
 // Daily codes are derived from this secret; vendor cannot guess future keys.
 async function sha(str){
   try{const buf=await crypto.subtle.digest('SHA-256',new TextEncoder().encode(str));
