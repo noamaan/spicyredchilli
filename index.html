@@ -589,7 +589,7 @@ const isoAddDays=n=>{const d=new Date();d.setDate(d.getDate()+n);return d.toISOS
 /* ============================================================
  
    ============================================================ */
-const LICENSE_SECRET='MNS-9F3K-2025'; 
+const LICENSE_SECRET='SRC-9F3K-2025'; 
 
 async function sha(str){
   try{const buf=await crypto.subtle.digest('SHA-256',new TextEncoder().encode(str));
