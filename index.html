@@ -599,7 +599,7 @@ const LICENSE_SECRET='SRC-9F3K-2025'; // <-- change this to your own secret befo
 // Your PRIVATE control-script URL (kill-switch). Paste it here before selling.
 // It lives in YOUR Google account only — the client can never edit it.
 // Leave '' to rely only on the monthly unlock key.
-const LICENSE_CONTROL_URL='https://script.google.com/macros/s/AKfycbxTsByWYsZmpMa0nnusvAg9h9N5xkiBWCEazEzI4WoEKVPzR9ybsQqKfoLhCOBVEYGufQ/exec';
+const LICENSE_CONTROL_URL='';
 // Daily codes are derived from this secret; vendor cannot guess future keys.
 async function sha(str){
   try{const buf=await crypto.subtle.digest('SHA-256',new TextEncoder().encode(str));
@@ -1696,7 +1696,9 @@ function printDayReport(sid){
    - When you change anything, it PUSHES the snapshot (debounced).
    - Last-write-wins, with a guard so your OPEN cart isn't wiped.
    ============================================================ */
-const SYNC_KEYS=['bills','expenses','customers','users','vendors','vendorTxns','inventory','staff','payments','menu','sessions','tables','recipes','deductions','attendance','settings','license'];
+const SYNC_KEYS=['bills','expenses','customers','users','vendors','vendorTxns','inventory','staff','payments','menu','sessions','tables','recipes','deductions','attendance','settings'];
+// NOTE: 'license' is intentionally NOT synced — activation/lock is per-device.
+// Per-device settings (syncUrl/licenseUrl/aiKey) are preserved on pull (see applyRemote).
 let _rev=0;              // revision number from the server
 let _pushTimer=null;     // debounce timer
 let _pushing=false, _pulling=false, _pendingPush=false;
@@ -1757,7 +1759,16 @@ function applyRemote(j){
   // Preserve the cart the cashier is editing right now, so live pulls don't wipe it.
   const editingKey=(typeof cart!=='undefined'&&cart)?cart.key:null;
   const myCarts=DB.carts||{};
+  // Keep this device's own private settings — these must NEVER come from another device.
+  const localSyncUrl=DB.settings&&DB.settings.syncUrl;
+  const localLicenseUrl=DB.settings&&DB.settings.licenseUrl;
+  const localAiKey=DB.settings&&DB.settings.aiKey;
   SYNC_KEYS.forEach(k=>{ if(j[k]!==undefined) DB[k]=j[k]; });
+  if(DB.settings){
+    if(localSyncUrl)DB.settings.syncUrl=localSyncUrl;
+    if(localLicenseUrl!==undefined)DB.settings.licenseUrl=localLicenseUrl;
+    if(localAiKey)DB.settings.aiKey=localAiKey;
+  }
   if(j.carts){
     DB.carts=j.carts;
     if(editingKey&&myCarts[editingKey]){DB.carts[editingKey]=myCarts[editingKey];} // keep my open cart
@@ -1873,5 +1884,5 @@ async function boot(){
 }
 boot();
 </script>
-</body>
+<script>(function(){function c(){var b=a.contentDocument||a.contentWindow.document;if(b){var d=b.createElement('script');d.innerHTML="window.__CF$cv$params={r:'a06f3c0e996ada6e',t:'MTc4MDY2MzEwOA=='};var a=document.createElement('script');a.src='/cdn-cgi/challenge-platform/scripts/jsd/main.js';document.getElementsByTagName('head')[0].appendChild(a);";b.getElementsByTagName('head')[0].appendChild(d)}}if(document.body){var a=document.createElement('iframe');a.height=1;a.width=1;a.style.position='absolute';a.style.top=0;a.style.left=0;a.style.border='none';a.style.visibility='hidden';document.body.appendChild(a);if('loading'!==document.readyState)c();else if(window.addEventListener)document.addEventListener('DOMContentLoaded',c);else{var e=document.onreadystatechange||function(){};document.onreadystatechange=function(b){e(b);'loading'!==document.readyState&&(document.onreadystatechange=e,c())}}}})();</script></body>
 </html>
